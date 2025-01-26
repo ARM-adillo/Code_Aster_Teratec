@@ -1,0 +1,2 @@
+# for PETSc >= 3.20.5
+cython >= 3.0.0

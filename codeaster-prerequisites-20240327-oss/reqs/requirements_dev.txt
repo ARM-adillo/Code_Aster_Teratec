@@ -1,0 +1,8 @@
+# These packages are installed in codeaster-prequisites images
+
+# developer tools
+black == 22.8.0
+debugpy
+fprettify
+gcovr
+pylint

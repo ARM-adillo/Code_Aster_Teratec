@@ -1,0 +1,12 @@
+diff -urbB MFrontGenericInterfaceSupport-MFrontGenericInterfaceSupport-2.2-55b7894eecdb089697ad141201b291316deac432.orig/CMakeLists.txt MFrontGenericInterfaceSupport-MFrontGenericInterfaceSupport-2.2-55b7894eecdb089697ad141201b291316deac432/CMakeLists.txt
+--- MFrontGenericInterfaceSupport-MFrontGenericInterfaceSupport-2.2-55b7894eecdb089697ad141201b291316deac432.orig/CMakeLists.txt	2023-11-30 14:19:03.000000000 +0100
++++ MFrontGenericInterfaceSupport-MFrontGenericInterfaceSupport-2.2-55b7894eecdb089697ad141201b291316deac432/CMakeLists.txt	2024-06-26 14:53:50.214851171 +0200
+@@ -41,7 +41,7 @@
+   message(STATUS "python include path   ${PYTHON_INCLUDE_DIRS}")
+   message(STATUS "python libraries path ${PYTHON_LIBRARY_PATH}")
+   message(STATUS "python library        ${PYTHON_LIBRARY}")
+-  string(REGEX REPLACE "[a-z]+.*$" "" PYTHONLIBS_VERSION_CLEANED ${PYTHONLIBS_VERSION_STRING})
++  string(REGEX REPLACE "[-a-z+]+.*$" "" PYTHONLIBS_VERSION_CLEANED "${PYTHONLIBS_VERSION_STRING}")
+   find_package(PythonInterp ${PYTHONLIBS_VERSION_CLEANED} REQUIRED)
+   message(STATUS "python interpreter    ${PYTHON_EXECUTABLE}")
+   if(NOT HAVE_PYTHON)

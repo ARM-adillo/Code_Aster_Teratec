@@ -1,0 +1,577 @@
+#!/usr/bin/env python3
+
+"""
+This script is a generic starter for code_aster and salome_meca within in
+a Singularity container.
+"""
+
+# The NAME contains "salome_meca" for container with salome_meca and prerequisites
+# or "prereq" for prerequisites only.
+# use the same config files for the updates of the same major version
+NAME = "_USED_FOR_"
+# NAME = "codeaster-prerequisites-rhel8"
+# NAME = "salome_meca-edf-2020"
+SALOMEDIR = "_SALOME_DIR_"
+BIN_SALOME = "_BIN_SALOME_"
+
+HWLOC_EMBEDDED = "_HWLOC_EMBEDDED_"
+
+import argparse
+import getpass
+import json
+import logging
+import os
+import os.path as osp
+import re
+import sys
+from argparse import SUPPRESS
+from itertools import chain
+from subprocess import PIPE, call, run
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
+_SMECA_ = "salome_meca" in NAME
+_LGPL_ = "lgpl" in NAME
+
+USAGE = """%(prog)s [options] -- [args]
+{summary}
+  Image path is:
+      {image}
+
+  The default temporary directory used for executions ($SCRATCHDIR) is automatically
+  mounted (use --no-scratch to disable) if it exists.
+{mnttools}
+  User configuration directories are also isolated by default to avoid
+  conflicts between usages from host and from containers.
+
+  Predefined mount points are defined in the configuration file
+  `{config}`.
+  This configuration file is automatically initialized with defaults at first startup.
+"""
+
+if _SMECA_:
+    SUMMARY = """
+  This script starts salome_meca within in a Singularity container.
+"""
+    MNTTOOLS = """
+  Predefined paths are provided for some modules/tools with default working directories.
+  This allows to override modules/tools by development installations.
+  Edit the configuration file to adapt SRC and DEST for your needs or use -B/--bind option.
+"""
+    EPILOG = """
+NB: SALOME options must be passed after '--' (as 'args').
+
+Examples:
+  Show SALOME help message:
+      %(prog)s -- --help
+
+  Start a new SALOME session in text mode:
+      %(prog)s -- start --port=2877 -t
+
+  Execute a Python script in a SALOME shell attached to the previous session:
+      %(prog)s -- shell --port=2877 -- python3 my-script.py
+
+  Terminate this session:
+      %(prog)s -- kill 2877
+"""
+else:
+    SUMMARY = """
+  This script starts an environment for code_aster.
+"""
+    MNTTOOLS = ""
+    EPILOG = ""
+
+
+IMG = osp.realpath(osp.abspath(__file__)) + ".sif"
+CFG = osp.expandvars("$HOME/.config/aster/{0}.yaml".format(NAME))
+DEFAULT_JSON = {
+    "mount": {
+        "/etc/krb5.conf": "/etc/krb5.conf",
+        "/etc/ssl/certs": "/etc/ssl/certs",
+        "${XDG_RUNTIME_DIR}": "${XDG_RUNTIME_DIR}",
+        "/tmp": BIN_SALOME + "/USERS",
+    },
+    "products": {
+        "testing": {"/tmp/salome-test-${USER}": BIN_SALOME + "/bin/salome/test/Testing"},
+        "asterstudy": {
+            "${HOME}/dev/smeca/salome-asterstudy/prefix": SALOMEDIR + "/modules/ASTERSTUDY_20210"
+        },
+        "medconverter": {
+            "${HOME}/dev/smeca/salome-med-convert/install": SALOMEDIR
+            + "/tools/Salomemeca_medconverter-20210"
+        },
+        "ort": {
+            "${HOME}/dev/smeca/salomemeca-ort/install": SALOMEDIR + "/tools/Salomemeca_ort-20210"
+        },
+        "rste": {
+            "${HOME}/dev/smeca/salome-meca-rste/prefix": SALOMEDIR + "/tools/Salomemeca_rste-20210"
+        },
+        "mac3dynamique": {
+            "${HOME}/dev/smeca/salomemeca-mac3dynamique/install": SALOMEDIR
+            + "/tools/Salomemeca_ac-20210"
+        },
+    },
+    "mnt_config": [".mozilla", ".config", ".gnome", ".local"],
+}
+
+if not _SMECA_:
+    del DEFAULT_JSON["mount"]["/tmp"]
+    del DEFAULT_JSON["products"]
+
+
+def get_scratch():
+    """Returns the scratch directory.
+
+    Returns:
+        str: Path to scratch directory (or "").
+    """
+    username = getpass.getuser()
+    scratch = os.environ.get("SCRATCHDIR", "")
+    if not scratch and osp.isdir("/scratch/" + username):
+        scratch = "/scratch/" + username
+    if not scratch and osp.isdir("/scratch/users/" + username):
+        scratch = "/scratch/users/" + username
+    if not scratch and osp.isdir("/local00/tmp"):
+        scratch = osp.join("/local00/tmp", username)
+        if not osp.exists(scratch):
+            os.makedirs(scratch)
+    return scratch
+
+
+def get_localtmp():
+    """Returns the extended temporary directory (on Scibian).
+
+    Returns:
+        str: Path to scratch directory (or "").
+    """
+    scratch = ""
+    if osp.isdir("/local00/tmp"):
+        scratch = "/local00/tmp"
+    return scratch
+
+
+def _logger():
+    """Create logger object"""
+    logger = logging.getLogger("salome_meca_singularity")
+    logger.setLevel(logging.DEBUG)
+    # create console handler and set level to debug
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG)
+    # formatter = logging.Formatter('%(levelname)s %(message)s')
+    # ch.setFormatter(formatter)
+    logger.addHandler(ch)
+    return logger
+
+
+LOG = _logger()
+
+
+def parse_args(argv):
+    """Parse command line arguments.
+
+    Arguments:
+        argv (list): List of command line arguments.
+    """
+    # command arguments parser
+    parser = argparse.ArgumentParser(
+        usage=USAGE.format(image=IMG, config=CFG, summary=SUMMARY, mnttools=MNTTOOLS),
+        epilog=EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "-s", "--soft", action="store_true", help="use software rendering" if _SMECA_ else SUPPRESS
+    )
+    parser.add_argument(
+        "--vgl", action="store_true", help="use VirtualGL rendering" if _SMECA_ else SUPPRESS
+    )
+    parser.add_argument(
+        "--no-scratch",
+        dest="scratch",
+        action="store_false",
+        default=True,
+        help="do not mount $SCRATCHDIR",
+    )
+    parser.add_argument(
+        "-B",
+        "--bind",
+        action="append",
+        help="bind paths. Multiple bind paths can be given by " "a comma separated list",
+    )
+    parser.add_argument(
+        "-m",
+        "--mountdev",
+        dest="mountdev",
+        action="store_true",
+        default=False,
+        help="mount build & install directories in $SCRATCHDIR",
+    )
+    parser.add_argument(
+        "--root",
+        action="store",
+        default="$HOME/dev/codeaster",
+        help="code_aster development root directory",
+    )
+    parser.add_argument(
+        "--no-prefs",
+        dest="prefs",
+        action="store_false",
+        default=True,
+        help="do not mount user preferences in " "$HOME/.config/aster/" + NAME,
+    )
+    parser.add_argument(
+        "--keep-ld-preload",
+        dest="unset_ld_preload",
+        action="store_false",
+        default=True,
+        help="do not remove LD_PRELOAD environment variable",
+    )
+    parser.add_argument(
+        "--keep-module-vars",
+        dest="unset_module",
+        action="store_false",
+        default=True,
+        help="do not remove MODULE/LMOD environment variables",
+    )
+    if _SMECA_:
+        start = "/opt/salome_meca/salome_meca"
+    else:
+        start = "bash"
+    parser.add_argument(
+        "--command",
+        action="store",
+        default=start,
+        help="command to be executed in container " "(see 'args' to pass additional arguments)",
+    )
+    detail = ""
+    if _SMECA_:
+        detail = " (without salome environment, just use 'shell' for a 'salome shell')"
+    parser.add_argument(
+        "--shell",
+        dest="command",
+        action="store_const",
+        const="bash",
+        help="start bash in the container" + detail,
+    )
+    parser.add_argument(
+        "--config_file",
+        action="store",
+        default=CFG,
+        metavar="FILE",
+        help="the configuration file to be used",
+    )
+    parser.add_argument(
+        "--reset", action="store_true", default=False, help="erase the existing configuration file"
+    )
+
+    devgrp = parser.add_argument_group("Additional options for developers")
+    devgrp.add_argument(
+        "-l",
+        "--list",
+        action="store_true",
+        help="list the available products" if _SMECA_ else SUPPRESS,
+    )
+    devgrp.add_argument(
+        "--<product>",
+        action="store_true",
+        help="mount directory for '<product>', use --list " "to see the available products"
+        if _SMECA_
+        else SUPPRESS,
+    )
+
+    parser.add_argument(
+        "--debug", action="store_true", help="print singularity debugging information"
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        dest="verbose",
+        action="count",
+        default=0,
+        help="print command line (more details with -vv)",
+    )
+
+    parser.add_argument(
+        "args", nargs="*", help="options passed to the command, " "must be passed after '--'"
+    )
+
+    return parser.parse_known_args(argv)
+
+
+def init_config(filename):
+    """Initialize the configuration file.
+
+    Arguments:
+        filename (str): path to the configuration file.
+    """
+    ext = osp.splitext(filename)[-1]
+    assert ext in (".yaml", ".json"), "'.yaml'/'.json' expected for the configuration file."
+    if osp.exists(filename):
+        os.remove(filename)
+    if not osp.exists(osp.dirname(filename)):
+        os.makedirs(osp.dirname(filename))
+    with open(filename, "w") as fobj:
+        if ext == ".yaml":
+            content = yaml.dump(DEFAULT_JSON, default_flow_style=False)
+        elif ext == ".json":
+            content = json.dumps(DEFAULT_JSON, indent=4)
+        fobj.write(content)
+    LOG.info("Configuration file created: {}".format(filename))
+
+
+def read_config(filename):
+    """Read JSON configuration file.
+
+    Arguments:
+        filename (str): path to the configuration file.
+    """
+    ext = osp.splitext(filename)[-1]
+    assert ext in (".yaml", ".json"), "'.yaml'/'.json' expected for the configuration file."
+    if ext == ".yaml":
+        with open(filename) as fyaml:
+            values = yaml.load(fyaml.read(), Loader=yaml.Loader)
+    elif ext == ".json":
+        values = json.load(open(filename))
+    values.setdefault("env", {})
+    values.setdefault("mount", {})
+    values.setdefault("products", {})
+    values.setdefault("mnt_config", [])
+    return values
+
+
+def bind(one, two=None):
+    """Return arguments to mount `one:two`.
+
+    Arguments:
+        one (str): Source path (outside) or "src[:dest[:opts]]".
+        two (str): Destination path (inside) or "dest[:opts]".
+    """
+    if not getattr(bind, "_pass", False):
+        LOG.debug("Mount points:")
+    bind._pass = True
+    args = ["--bind"]
+    if not two:
+        args.append(one)
+        LOG.debug(" " + one)
+    else:
+        if not osp.exists(one):
+            os.makedirs(one)
+        args.append(one + ":" + two)
+        LOG.debug(" " + two)
+    return args
+
+
+def get_mountpoints(mountpoints):
+    """Return arguments to mount paths from configuration.
+
+    Arguments:
+        mountpoints (dict): Mountpoints definition.
+    """
+    opts = []
+    for src, dest in mountpoints.items():
+        src = osp.expandvars(src)
+        dest = osp.expandvars(dest)
+        if not osp.exists(src):
+            LOG.debug("not exist: {}".format(src))
+            continue
+        opts.extend(bind(src, dest))
+    return opts
+
+
+def get_userprefs(cfg):
+    """Return arguments to mount user config paths from configuration.
+
+    Arguments:
+        cfg (dict): Configuration dict.
+    """
+    opts = []
+    for src in cfg["mnt_config"]:
+        path = osp.expandvars(osp.join("$HOME", ".config", "aster", NAME, src))
+        dest = osp.expandvars(osp.join("$HOME", src))
+        if not osp.exists(dest):
+            os.makedirs(dest)
+        opts.extend(bind(path, dest))
+    return opts
+
+
+def show_products(cfg):
+    """Show available products.
+
+    Arguments:
+        cfg (dict): Configuration dict.
+    """
+    LOG.info("List of supported products:")
+    for name, path in cfg["products"].items():
+        for src, dst in path.items():
+            LOG.info("  --{0:<20}{1}:{2}".format(name, src, dst))
+
+
+def enabled_products(argv, products):
+    """Return the list of products to be mounted.
+
+    Arguments:
+        argv (list): Arguments.
+        products (list[str]): Name of available products.
+
+    Returns:
+        list: List of products names.
+    """
+    parser = argparse.ArgumentParser()
+
+    for name in products:
+        parser.add_argument("--" + name, action="store_true")
+    args, remain = parser.parse_known_args(argv)
+    enabled = [name for name in products if getattr(args, name)]
+    return enabled, remain
+
+
+def find_program(program):
+    """Check for a program in $PATH.
+
+    Arguments:
+        program (str): program name
+
+    Returns:
+        bool: *True* if the program is found, *False* otherwise.
+    """
+    return run(["which", program], stdout=PIPE, stderr=PIPE).returncode == 0
+
+
+def check_hwloc():
+    """Search for hwloc components that are not available on the host."""
+    # avoid 'Invalid MIT-MAGIC-COOKIE-1 key' message and sometimes locks
+    regexp = re.compile("hwloc_(.*)\.so")
+    try:
+        out_ct = os.listdir("/usr/lib/x86_64-linux-gnu/hwloc")
+    except FileNotFoundError:
+        out_ct = []
+    in_ct = set(HWLOC_EMBEDDED.split(":"))
+    unknown = in_ct.difference(out_ct)
+    option = ""
+    for compo in unknown:
+        mat = regexp.search(compo)
+        if not mat:
+            continue
+        # disable this component
+        option += " -" + mat.group(1)
+    if option:
+        value = option.strip()
+        LOG.info("Setting environment variable: HWLOC_COMPONENTS={0!r}".format(value))
+        os.environ["HWLOC_COMPONENTS"] = value
+
+
+def _unset_env(var):
+    if var in os.environ:
+        LOG.info("Resetting environment variable: {0}".format(var))
+        os.environ.pop(var, None)
+
+
+def export_env(env_vars):
+    """Export environment variables into container.
+
+    Arguments:
+        env_vars (dict): mapping of environment variables values.
+    """
+    for name, value in env_vars.items():
+        value = osp.expandvars(value)
+        LOG.info("Setting environment variable: {0}={1}".format(name, value))
+        os.environ[name] = str(value)
+
+
+def main(argv=None):
+    """Entry point for singularity wrapper for salome_meca.
+
+    Arguments:
+        argv (list): List of command line arguments.
+    """
+    if os.environ.get("SINGULARITY_NAME"):
+        raise RuntimeError("You are already in a container environment.")
+
+    argv = argv or sys.argv[1:]
+    args, unknown = parse_args(argv)
+    others = getattr(args, "args")
+
+    LOG.setLevel(logging.INFO)
+    if args.verbose == 0 and not args.list:
+        LOG.setLevel(logging.WARNING)
+    if args.verbose > 1 or args.debug:
+        LOG.setLevel(logging.DEBUG)
+
+    if not osp.exists(args.config_file):
+        if not yaml:
+            args.config_file = osp.splitext(args.config_file)[0] + ".json"
+    if args.reset or not osp.exists(args.config_file):
+        init_config(args.config_file)
+        if args.reset:
+            LOG.warning(
+                "'{0}' has been reset successfully, please restart.".format(args.config_file)
+            )
+            return 0
+
+    cfg = read_config(args.config_file)
+    if args.list:
+        show_products(cfg)
+        return 0
+    if not args.soft and find_program("scibian-nvidia"):
+        cfg["env"]["__NV_PRIME_RENDER_OFFLOAD"] = "1"
+        cfg["env"]["__GLX_VENDOR_LIBRARY_NAME"] = "nvidia"
+    export_env(cfg["env"])
+    if args.unset_ld_preload:
+        _unset_env("LD_PRELOAD")
+    if args.unset_module:
+        keys = ["MODULESHOME", "MODULEPATH_ROOT", "MODULEPATH"]
+        keys.extend([k for k in os.environ.keys() if k.startswith("LMOD_")])
+        for k in keys:
+            _unset_env(k)
+    check_hwloc()
+
+    prods = list(cfg["products"].keys())
+    products, remaining_args = enabled_products(unknown, prods)
+
+    LOG.info(" ".join(["Running: singularity", "exec", IMG, "--", args.command, " ".join(others)]))
+    cmdline = ["singularity"]
+    if args.debug:
+        cmdline.append("--debug")
+    cmdline.append("exec")
+    if not args.soft:
+        cmdline.append("--nv")
+    if args.vgl:
+        os.environ["SINGULARITYENV_USE_VGL"] = "1"
+    # add product binding
+    for name in products:
+        if args.verbose <= 1:
+            LOG.warning("Overlaying {0}".format(name))
+        cmdline.extend(get_mountpoints(cfg["products"][name]))
+    cmdline.extend(get_mountpoints(cfg["mount"]))
+    if args.prefs:
+        cmdline.extend(get_userprefs(cfg))
+    if args.scratch and get_scratch():
+        scratch = get_scratch()
+        cmdline.extend(bind(scratch))
+        if args.mountdev:
+            root = osp.abspath(osp.expandvars(args.root))
+            root_ = root.replace("/", "_")
+            mounted = osp.join(scratch, ".mounted", NAME, root_)
+            cmdline.extend(bind(osp.join(mounted, "build"), osp.join(root, "src", "build")))
+            cmdline.extend(bind(osp.join(mounted, "install"), osp.join(root, "install")))
+    if get_localtmp():
+        cmdline.extend(bind(get_localtmp()))
+    for mnt in args.bind or []:
+        cmdline.extend(bind(*mnt.split(":")))
+
+    cmdline.append(IMG)
+    cmdline.append(args.command)
+    cmdline.extend(remaining_args)
+    cmdline.extend(others)
+
+    LOG.debug(" ".join(["+"] + cmdline))
+    returncode = call(cmdline)
+    if returncode != 0:
+        LOG.warning("singularity exit code: {0}".format(returncode))
+    return returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

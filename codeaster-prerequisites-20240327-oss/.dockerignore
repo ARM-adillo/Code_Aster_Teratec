@@ -1,0 +1,5 @@
+archives/
+.build*/
+codeaster-prerequisites*.gz
+*.sif
+*.sif.sha1

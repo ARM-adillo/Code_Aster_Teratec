@@ -1,0 +1,5 @@
+Bootstrap: docker
+From: nexus.retd.edf.fr/curlimages/curl:8.5.0
+
+%runscript
+exec /usr/bin/curl "${@}"

@@ -1,0 +1,36 @@
+#!/bin/bash
+
+# Script executed by:
+#   singularity run --app install <image-name>.sif
+
+root=$(dirname ${SINGULARITY_CONTAINER})
+dest="${root}/${SINGULARITY_NAME%.*}"
+smeca=$(grep -c salome_meca <<< "_USED_FOR_")
+
+cp /opt/devscripts/starter_script "${dest}" 2> /dev/null
+
+iret=$?
+if [ ${iret} -eq 0 ]; then
+    echo "Installation successfully completed."
+    if [ "${smeca}" = "1" ]; then
+        echo "To start salome_meca, just use:"
+        echo "  ${dest}"
+        echo "or (in the installation directory):"
+        echo "  ./${SINGULARITY_NAME%.*}"
+        echo
+        echo "If you want to check your configuration, use:"
+        echo "  singularity run --app check ${SINGULARITY_NAME}"
+    else
+        echo "To use a shell in the container environment, just use:"
+        echo "  ${dest}"
+        echo "or (in the installation directory):"
+        echo "  ./${SINGULARITY_NAME%.*}"
+    fi
+else
+    echo "The starter script must be installed in ${root}."
+    echo "ERROR: no write access to ${root}."
+    echo
+    echo "Restart the installation with:"
+    echo "  cd ${root}"
+    echo "  singularity run --app install ${SINGULARITY_NAME}"
+fi

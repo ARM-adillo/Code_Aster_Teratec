@@ -1,0 +1,23 @@
+FROM %baseimage%
+
+USER root
+ENV WRKDIR /opt/repo
+WORKDIR ${WRKDIR}
+
+RUN \
+    mkdir -p ${WRKDIR} ; \
+    cd ${WRKDIR} ; \
+    git clone --depth=100 https://gitlab.pleiade.edf.fr/codeaster/src ; \
+    cd ${WRKDIR}/src ; \
+    . /opt/public/*_mpi.sh ; \
+    ./configure --prefix=/opt/codeaster ; \
+    jobs=$(( $(nproc) - 2 )) ; \
+    make install -j ${jobs} ; \
+    rm -rf ${WRKDIR}
+
+ENV WRKDIR=
+
+USER user
+WORKDIR /home/user
+
+ENTRYPOINT ["/opt/codeaster/bin/run_aster"]

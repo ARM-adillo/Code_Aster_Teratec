@@ -1,0 +1,40 @@
+# Softwares versions
+# /!\ only define variables, must be valid for Makefile, bash and Python /!\
+# '_GPL' versions must be defined *after* restricted ones.
+
+VERSION="20240327"
+
+HDF5="1.10.9"
+MED="4.1.1"
+METIS="5.2.1" # prefix 'v' added in build script
+_GKLIB="master"
+PARMETIS="4.0.3_aster3"
+MFRONT="4.2.0" # prefix 'TFEL-' added in build script
+# MFRONT_SHA=""
+MGIS="2.2" # prefix 'MFrontGenericInterfaceSupport-' added in build script
+#MGIS_SHA=""
+HOMARD="11.12_aster2"
+SCOTCH="7.0.4" # prefix 'v' added in build script
+SCALAPACK="2.2.0"
+MUMPS="5.6.2.2c"
+MUMPS_GPL="5.6.2"
+PETSC="v3.20.5"
+PETSC_3RD="v3.20.5"
+_ARPACK="3.9.0"
+_HPDDM="201eecd26177f88d7bb6287251877d8013fb64d2"
+_HYPRE="v2.29.0"
+_ML="v13.2.0"
+_SLEPC="v3.20.1"
+_SOWING="v1.1.26-p8"
+_SUPERLU="v6.0.1"
+MISS3D="6.7_aster7"
+MPI4PY="3.1.5"
+MEDCOUPLING="V9_11_0"
+_CONFIGURATION="V9_11_0"
+ECREVISSE="3.2.2"
+ECREVISSE_GPL="None"
+GMSH="4.10.5-Linux64"
+GRACE="0.0.1"
+ASRUN="2023.0.0"
+
+RESTRICTED=0

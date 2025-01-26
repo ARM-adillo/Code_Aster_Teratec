@@ -1,0 +1,13 @@
+# General code_aster requirements
+# These packages are usually installed via the package manager or in a pyenv.
+
+# Note: This list is not used during the codeaster-prerequisites build.
+
+# officially tested versions
+numpy==1.19.5
+scipy==1.6.0
+
+# version must match with VERSION file
+mpi4py==3.1.5
+
+pyyaml
